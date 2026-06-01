@@ -1,0 +1,14 @@
+{
+  "name": "lupo-shop-ticket",
+  "version": "1.0.0",
+  "description": "Discord ticket bot per Lupo Shop con pannello e gestione ticket.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.0",
+    "dotenv": "^16.3.1"
+  }
+}
