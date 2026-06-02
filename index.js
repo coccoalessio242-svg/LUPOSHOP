@@ -14,6 +14,7 @@ const {
   ACCESS_ROLE_ID,
   BANNER_URL,
   DISCORD_ICON_URL,
+  USE_MESSAGE_CONTENT_INTENT,
 } = process.env;
 
 const DEFAULT_BANNER_URL = 'https://i.postimg.cc/CLCzYX7k/TICKET.png';
@@ -22,6 +23,7 @@ const SPAM_TIME_WINDOW = 10000; // 10 secondi
 const TIMEOUT_DURATION = 5 * 60 * 1000; // 5 minuti
 const discordInvitePattern = /(https?:\/\/)?(www\.)?(discord\.gg|discord\.com\/invite|discordapp\.com\/invite)\/[\S]+/i;
 const spamTracker = new Map();
+const hasMessageContentIntent = (USE_MESSAGE_CONTENT_INTENT || 'false').toLowerCase() === 'true';
 
 if (!BOT_TOKEN || !GUILD_ID || !PANEL_CHANNEL_ID || !VERIFY_PANEL_CHANNEL_ID || !TICKET_ROLE_ID || !LOG_CHANNEL_ID || !ADMIN_ROLE_ID || !ACCESS_ROLE_ID) {
   console.error('Errore: alcune variabili di ambiente mancano. Controlla .env');
@@ -29,9 +31,17 @@ if (!BOT_TOKEN || !GUILD_ID || !PANEL_CHANNEL_ID || !VERIFY_PANEL_CHANNEL_ID || 
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    ...(hasMessageContentIntent ? [GatewayIntentBits.MessageContent] : []),
+  ],
   partials: [Partials.Channel],
 });
+
+if (!hasMessageContentIntent) {
+  console.warn('Warn: Message Content Intent non abilitato. Il filtro link e alcuni controlli basati sul contenuto dei messaggi saranno disabilitati.');
+}
 
 const ticketButtons = [
   { label: '🛠️ SUPPORTO', style: ButtonStyle.Primary, id: 'ticket_SUPPORTO', description: 'Richiedi assistenza e supporto tecnico' },
@@ -49,34 +59,42 @@ function sanitizeChannelName(text) {
 }
 
 function buildPanelEmbed() {
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setTitle('🎫 LUPO SHOP TICKET')
-    .setDescription('Scegli la categoria giusta e apri il ticket corretto.\nUn ticket aperto alla volta.')
+    .setDescription('Scegli la categoria giusta e premi il pulsante corrispondente alla tua richiesta.\nUn ticket aperto alla volta.\n\n🟢 *Usa i pulsanti qui sotto per aprire il ticket corretto.*')
     .addFields(
-      { name: '🛠️ SUPPORTO', value: 'Richiedi assistenza su prodotti, ordini e problemi tecnici.', inline: false },
-      { name: '🛒 COMPRARE', value: 'Apri un ticket per domande su acquisti, ordini e metodi di pagamento.', inline: false },
-      { name: 'ℹ️ INFO', value: 'Chiedi tutte le informazioni su servizi, offerte e disponibilità.', inline: false },
-      { name: '💬 SERVER DISCORD', value: 'Ricevi supporto per il server Discord e la community.', inline: false }
+      { name: '🛠️ SUPPORTO', value: 'Richiedi assistenza su prodotti, ordini e problemi tecnici.\n↳ Premi **SUPPORTO** per aprire il ticket.', inline: false },
+      { name: '🛒 COMPRARE', value: 'Apri un ticket per domande su acquisti, ordini e metodi di pagamento.\n↳ Premi **COMPRARE** per aprire il ticket.', inline: false },
+      { name: 'ℹ️ INFO', value: 'Chiedi tutte le informazioni su servizi, offerte e disponibilità.\n↳ Premi **INFO** per aprire il ticket.', inline: false },
+      { name: '💬 SERVER DISCORD', value: 'Ricevi supporto per il server Discord e la community.\n↳ Premi **SERVER DISCORD** per aprire il ticket.', inline: false }
     )
     .setColor('#ffd43b')
     .setAuthor({ name: 'Lupo Shop', iconURL: DISCORD_ICON_URL || undefined })
     .setFooter({ text: 'Lupo Shop' });
+}
 
-  embed.setImage(BANNER_URL || DEFAULT_BANNER_URL);
-
-  if (DISCORD_ICON_URL) {
-    embed.setThumbnail(DISCORD_ICON_URL);
-  }
-
-  return embed;
+function buildBannerEmbed() {
+  return new EmbedBuilder()
+    .setColor('#ffd43b')
+    .setImage(BANNER_URL || DEFAULT_BANNER_URL)
+    .setFooter({ text: 'Lupo Shop' });
 }
 
 function buildTicketButtons() {
-  return ticketButtons.map((button) =>
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(button.id).setLabel(button.label).setStyle(button.style)
-    )
-  );
+  const rows = [];
+  for (let i = 0; i < ticketButtons.length; i += 2) {
+    const row = new ActionRowBuilder();
+    row.addComponents(
+      new ButtonBuilder().setCustomId(ticketButtons[i].id).setLabel(ticketButtons[i].label).setStyle(ticketButtons[i].style)
+    );
+    if (ticketButtons[i + 1]) {
+      row.addComponents(
+        new ButtonBuilder().setCustomId(ticketButtons[i + 1].id).setLabel(ticketButtons[i + 1].label).setStyle(ticketButtons[i + 1].style)
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
 function buildTicketActionRow() {
@@ -91,6 +109,7 @@ function buildTicketActionRow() {
 async function createTicketPanel(interaction) {
   if (!interaction.guild) return;
 
+  const bannerEmbed = buildBannerEmbed();
   const embed = buildPanelEmbed();
   const rows = buildTicketButtons();
 
@@ -101,7 +120,7 @@ async function createTicketPanel(interaction) {
     return;
   }
 
-  await channel.send({ embeds: [embed], components: rows });
+  await channel.send({ embeds: [bannerEmbed, embed], components: rows });
 }
 
 function buildVerifyPanelEmbed() {
@@ -110,8 +129,7 @@ function buildVerifyPanelEmbed() {
     .setDescription('Clicca il pulsante qui sotto per ottenere il ruolo di accesso al server.')
     .setColor('#ffd43b')
     .setAuthor({ name: 'Lupo Shop', iconURL: DISCORD_ICON_URL || undefined })
-    .setFooter({ text: 'Verifica l’accesso a Lupo Shop' })
-    .setImage(BANNER_URL || DEFAULT_BANNER_URL);
+    .setFooter({ text: 'Verifica l’accesso a Lupo Shop' });
 }
 
 function buildVerifyButtonRow() {
@@ -268,10 +286,17 @@ Descrivi bene il tuo problema o la tua richiesta.`)
 function userCanManage(interaction) {
   const member = interaction.member;
   if (!member || !interaction.guild) return false;
-  const roleCache = member.roles?.cache || (member.roles ? member.roles : null);
-  const hasTicketRole = roleCache?.has(TICKET_ROLE_ID);
-  const hasAdminRole = roleCache?.has(ADMIN_ROLE_ID);
-  return Boolean(hasTicketRole || hasAdminRole);
+
+  let roleIds = [];
+  if (member.roles?.cache) {
+    roleIds = Array.from(member.roles.cache.keys());
+  } else if (Array.isArray(member.roles)) {
+    roleIds = member.roles;
+  } else if (member.roles?.roles) {
+    roleIds = Array.from(member.roles.roles);
+  }
+
+  return roleIds.includes(TICKET_ROLE_ID) || roleIds.includes(ADMIN_ROLE_ID);
 }
 
 async function generateTranscript(channel) {
@@ -343,7 +368,18 @@ async function closeTicket(interaction) {
   }
 
   await interaction.reply({ content: `✅ Ticket chiuso da ${interaction.user.tag}. Transcript inviato e canale eliminato.`, ephemeral: true });
-  setTimeout(() => channel.delete().catch(() => {}), 3000);
+  setTimeout(async () => {
+    try {
+      await channel.delete('Ticket chiuso da staff');
+    } catch (err) {
+      console.warn('Impossibile eliminare il canale ticket:', err);
+      try {
+        await interaction.followUp({ content: '❌ Ticket chiuso ma il canale non è stato eliminato. Contatta lo staff.', ephemeral: true });
+      } catch (followErr) {
+        console.warn('Errore durante il follow-up di eliminazione canale:', followErr);
+      }
+    }
+  }, 3000);
 }
 
 async function grantAccessRole(interaction) {
@@ -472,8 +508,9 @@ client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.guild || !message.member) return;
 
   const isAdmin = message.member.roles.cache.has(ADMIN_ROLE_ID);
+  const canCheckMessageContent = hasMessageContentIntent && typeof message.content === 'string';
 
-  if (!isAdmin && discordInvitePattern.test(message.content)) {
+  if (!isAdmin && canCheckMessageContent && discordInvitePattern.test(message.content)) {
     await message.delete().catch(() => null);
     const reply = await message.channel.send({ content: `${message.author}, i link Discord sono vietati se non sei un admin.`, allowedMentions: { repliedUser: false } });
     setTimeout(() => reply.delete().catch(() => null), 5000);
